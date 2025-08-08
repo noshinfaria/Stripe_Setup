@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stripe Payment</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .payment-form {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        /* Stripe Elements styling */
+        .StripeElement {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+            box-sizing: border-box;
+        }
+        .StripeElement--focus {
+            border-color: #5469d4;
+            box-shadow: 0 0 0 2px rgba(84, 105, 212, 0.2);
+        }
+        .StripeElement--invalid {
+            border-color: #e74c3c;
+        }
+        button {
+            background-color: #5469d4;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #4f63d2;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .error {
+            color: #e74c3c;
+            margin-top: 10px;
+        }
+        .success {
+            color: #27ae60;
+            margin-top: 10px;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .amount-display {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-form">
+        <h2>Complete Your Payment</h2>
+        
+        <div class="amount-display">
+            Amount: $<span id="amount-display">0.00</span>
+        </div>
+
+        <form id="payment-form">
+            <div class="form-group">
+                <label for="amount">Payment Amount ($)</label>
+                <input type="number" id="amount" name="amount" step="0.01" min="0.50" required>
+            </div>
+
+            <div class="form-group">
+                <label for="cardholder-name">Cardholder Name</label>
+                <input type="text" id="cardholder-name" name="cardholder-name" required>
+            </div>
+
+            <div class="form-group">
+                <label for="card-element">Card Information</label>
+                <div id="card-element">
+                    <!-- Stripe Elements will create form elements here -->
+                </div>
+            </div>
+
+            <button type="submit" id="submit-button">
+                <span id="button-text">Pay Now</span>
+            </button>
+
+            <div class="loading" id="loading">
+                Processing payment...
+            </div>
+
+            <div id="card-errors" class="error"></div>
+            <div id="payment-result"></div>
+        </form>
+    </div>
+
+    <script>
+        // Initialize Stripe (replace with your publishable key)
+        const stripe = Stripe('pk_test_');
+        
+        // Create an instance of Elements
+        const elements = stripe.elements();
+        
+        // Create an instance of the card Element
+        const cardElement = elements.create('card', {
+            style: {
+                base: {
+                    fontSize: '16px',
+                    color: '#424770',
+                    '::placeholder': {
+                        color: '#aab7c4',
+                    },
+                },
+                invalid: {
+                    color: '#9e2146',
+                },
+            },
+        });
+
+        // Add an instance of the card Element into the `card-element` <div>
+        cardElement.mount('#card-element');
+
+        // Get form elements
+        const form = document.getElementById('payment-form');
+        const amountInput = document.getElementById('amount');
+        const amountDisplay = document.getElementById('amount-display');
+        const cardholderNameInput = document.getElementById('cardholder-name');
+        const submitButton = document.getElementById('submit-button');
+        const buttonText = document.getElementById('button-text');
+        const loading = document.getElementById('loading');
+        const cardErrors = document.getElementById('card-errors');
+        const paymentResult = document.getElementById('payment-result');
+
+        // Handle real-time validation errors from the card Element
+        cardElement.on('change', function(event) {
+            if (event.error) {
+                showError(event.error.message);
+            } else {
+                clearError();
+            }
+        });
+
+        // Update amount display
+        amountInput.addEventListener('input', function(e) {
+            const amount = parseFloat(e.target.value) || 0;
+            amountDisplay.textContent = amount.toFixed(2);
+        });
+
+        // Handle form submission
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            
+            const amount = parseFloat(amountInput.value);
+            const cardholderName = cardholderNameInput.value.trim();
+
+            // Validate inputs
+            if (amount < 0.50) {
+                showError('Amount must be at least $0.50');
+                return;
+            }
+
+            if (!cardholderName) {
+                showError('Please enter the cardholder name');
+                return;
+            }
+
+            setLoading(true);
+
+            try {
+                // Create payment intent on the server
+                const response = await fetch('/create-payment-intent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        amount: Math.round(amount * 100) // Convert to cents
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create payment intent');
+                }
+
+                const { client_secret: clientSecret } = await response.json();
+
+                // Confirm the payment with Stripe
+                const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+                    payment_method: {
+                        card: cardElement,
+                        billing_details: {
+                            name: cardholderName
+                        }
+                    }
+                });
+
+                if (error) {
+                    showError(error.message);
+                } else {
+                    showSuccess(`Payment succeeded! Payment ID: ${paymentIntent.id}`);
+                    form.reset();
+                    amountDisplay.textContent = '0.00';
+                    cardElement.clear();
+                }
+            } catch (err) {
+                console.error('Payment error:', err);
+                showError('Payment failed: ' + err.message);
+            }
+
+            setLoading(false);
+        });
+
+        function showError(message) {
+            cardErrors.textContent = message;
+            paymentResult.textContent = '';
+            paymentResult.className = '';
+        }
+
+        function clearError() {
+            cardErrors.textContent = '';
+        }
+
+        function showSuccess(message) {
+            paymentResult.textContent = message;
+            paymentResult.className = 'success';
+            cardErrors.textContent = '';
+        }
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                submitButton.disabled = true;
+                buttonText.textContent = 'Processing...';
+                loading.style.display = 'block';
+            } else {
+                submitButton.disabled = false;
+                buttonText.textContent = 'Pay Now';
+                loading.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
